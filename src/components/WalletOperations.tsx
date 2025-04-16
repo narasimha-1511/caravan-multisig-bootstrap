@@ -104,7 +104,7 @@ export const WalletOperations = () => {
     try {
       setLoading(true);
       const nextIndex = addresses.length;
-      const newPath = `m/0/${nextIndex+1}`; // Calculate next path
+      const newPath = `m/0/${nextIndex+10}`; // Calculate next path
 
       // Derive public keys for each signer at the new path
       const pubkeys = await Promise.all(config.extendedPublicKeys.map(async key => {

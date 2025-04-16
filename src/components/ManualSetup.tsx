@@ -2,10 +2,10 @@ import { useState, useRef } from 'react';
 import { 
   Network, 
   generateMultisigFromPublicKeys, 
-  validateExtendedPublicKey,
   deriveChildPublicKey,
-  validateBIP32Path,
-  BitcoinNetwork
+  BitcoinNetwork,
+  validateExtendedPublicKey,
+  validateBIP32Path 
 } from '@caravan/bitcoin';
 import { Buffer } from 'buffer';
 import { WalletOperations } from './WalletOperations';
@@ -13,31 +13,52 @@ import { useWalletStore } from '../store/walletStore';
 
 interface KeyPair {
   publicKey: string;
-  bip32Path: string;
+  path: string;
+  fingerprint: string;
+  name?: string;
+}
+
+interface WalletConfig {
+  name: string;
+  quorum: {
+    requiredSigners: number;
+    totalSigners: number;
+  };
+  extendedPublicKeys: KeyPair[];
 }
 
 export const ManualSetup = () => {
-  const { setConfig, setCurrentAddress, importConfig, addAddress } = useWalletStore();
+  const { setConfig: setStoreConfig, setCurrentAddress, addAddress , clearAddresses } = useWalletStore();
   const [keys, setKeys] = useState<KeyPair[]>([]);
   const [threshold, setThreshold] = useState(2);
   const [totalSigners, setTotalSigners] = useState(3);
-  const [multisigAddress, setMultisigAddress] = useState('');
   const [currentXpub, setCurrentXpub] = useState('');
   const [currentPath, setCurrentPath] = useState("m/0/0");
-  const [error, setError] = useState('');
-  const [pathErrors, setPathErrors] = useState<{[key: number]: string}>({});
+  const [error, setError] = useState<string | null>(null);
+  const [pathErrors, setPathErrors] = useState<Record<number, string>>({});
+  const [multisigAddress, setMultisigAddress] = useState('');
   const [walletCreated, setWalletCreated] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const validatePath = (path: string): boolean => {
+    if (!path) return false;
     try {
-      // validateBIP32Path returns void if valid, throws if invalid
-      if(validateBIP32Path(path) != "") {
-        throw new Error('Invalid BIP32 path: ' + validateBIP32Path(path));
-      }
-      return true;
+      const error = validateBIP32Path(path);
+      return !error;  // If no error string returned, path is valid
     } catch {
       return false;
+    }
+  };
+
+  const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      await handleImportConfig(text);
+    } catch (err) {
+      setError('Failed to read config file');
     }
   };
 
@@ -50,8 +71,9 @@ export const ManualSetup = () => {
         throw new Error('Invalid xpub format. Must start with "xpub", "tpub", "ypub", or "zpub"');
       }
 
-      if (validateExtendedPublicKey(currentXpub, Network.REGTEST)) {
-        throw new Error('Invalid xpub format. Must be a valid extended public key');
+      const validationError = validateExtendedPublicKey(currentXpub, Network.REGTEST);
+      if (validationError) {
+        throw new Error(`Invalid extended public key format: ${currentXpub} ${validationError}`);
       }
 
       // Validate BIP32 path before adding
@@ -61,7 +83,8 @@ export const ManualSetup = () => {
 
       setKeys(prev => [...prev, { 
         publicKey: currentXpub.trim(),
-        bip32Path: currentPath
+        path: currentPath,
+        fingerprint: '',
       }]);
       setCurrentXpub('');
       setError('');
@@ -89,7 +112,7 @@ export const ManualSetup = () => {
       return;
     }
     setKeys(prev => prev.map((key, i) => 
-      i === index ? { ...key, bip32Path: path } : key
+      i === index ? { ...key, path: path } : key
     ));
     // Clear error for this key
     setPathErrors(prev => {
@@ -99,45 +122,94 @@ export const ManualSetup = () => {
     });
   };
 
-  const handleImportConfig = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  const handleImportConfig = async (jsonConfig: string) => {
     try {
-      const text = await file.text();
-      importConfig(text);
-      const config = JSON.parse(text);
-      
-      // Set up the form with imported values
+      const config = JSON.parse(jsonConfig);
+
+      // Convert config format
+      const walletConfig: WalletConfig = {
+        name: config.name,
+        quorum: {
+          requiredSigners: config.quorum.requiredSigners,
+          totalSigners: config.quorum.totalSigners
+        },
+        extendedPublicKeys: config.extendedPublicKeys.map((key: any) => ({
+          publicKey: key.xpub,
+          path: key.bip32Path,
+          fingerprint: key.xfp,
+          name: key.name
+        }))
+      };
+
+      setStoreConfig(walletConfig);
+
+      // Extract key info
+      const newKeys = config.extendedPublicKeys.map((key: any) => ({
+        publicKey: key.xpub,
+        path: key.bip32Path,
+        fingerprint: key.xfp,
+        name: key.name
+      }));
+
+      setKeys(newKeys);
       setThreshold(config.quorum.requiredSigners);
       setTotalSigners(config.quorum.totalSigners);
-      setKeys(config.extendedPublicKeys.map((key: any) => ({
-        publicKey: key.xpub,
-        bip32Path: key.bip32Path,
-      })));
-      
-      // Clear the file input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+
+      // Generate initial address
+      const pubkeyHexes = await Promise.all(newKeys.map(async (key: KeyPair) => {
+        try {
+          const validationError = validateExtendedPublicKey(key.publicKey, Network.REGTEST);
+          if (validationError) {
+            throw new Error(`Invalid extended public key format: ${key.publicKey} ${validationError}`);
+          }
+
+          const childPubkey = deriveChildPublicKey(
+            key.publicKey,
+            key.path.toString().replace(/'/g, ''),
+            Network.REGTEST as BitcoinNetwork
+          );
+
+          if (!childPubkey) {
+            throw new Error(`Failed to derive child public key from: ${key.publicKey}`);
+          }
+
+          return Buffer.from(childPubkey, 'hex');
+        } catch (err) {
+          throw new Error(`${err}`);
+        }
+      }));
+
+      const address = await generateMultisigFromPublicKeys(
+        Network.REGTEST,
+        'P2WSH',
+        threshold,
+        ...pubkeyHexes.map(buf => buf.toString('hex'))
+      );
+
+      if (!address?.address) {
+        throw new Error('Failed to generate multisig address');
       }
+
+      setCurrentAddress(address.address);
+      setMultisigAddress(address.address);
+
     } catch (err) {
-      setError('Failed to import config: Invalid format');
+      setError(err instanceof Error ? err.message : 'Failed to import config');
     }
   };
 
   const handleExportConfig = () => {
-    const config = {
+    const config: WalletConfig = {
       name: 'My Multisig Wallet',
-      network: 'regtest',
-      addressType: 'P2WSH',
       quorum: {
         requiredSigners: threshold,
         totalSigners: totalSigners,
       },
       extendedPublicKeys: keys.map(key => ({
-        name: 'Extended Public Key',
-        bip32Path: key.bip32Path,
-        xpub: key.publicKey,
+        publicKey: key.publicKey,
+        path: key.path,
+        fingerprint: key.fingerprint,
+        name: key.name
       })),
     };
 
@@ -160,7 +232,7 @@ export const ManualSetup = () => {
       // Check all paths are valid before proceeding
       const invalidPaths = keys.map((key, index) => ({
         index,
-        valid: validatePath(key.bip32Path)
+        valid: validatePath(key.path)
       })).filter(item => !item.valid);
 
       if (invalidPaths.length > 0) {
@@ -170,13 +242,14 @@ export const ManualSetup = () => {
       // Generate initial multisig address
       const pubkeys = await Promise.all(keys.map(async key => {
         try {
-          if (validateExtendedPublicKey(key.publicKey, Network.REGTEST) != "") {
-            throw new Error(`Invalid extended public key format: ${key.publicKey} ${validateExtendedPublicKey(key.publicKey, Network.REGTEST)}`);
+          const validationError = validateExtendedPublicKey(key.publicKey, Network.REGTEST);
+          if (validationError) {
+            throw new Error(`Invalid extended public key format: ${key.publicKey} ${validationError}`);
           }
 
           const childPubkey = deriveChildPublicKey(
             key.publicKey,
-            key.bip32Path.toString().replace(/'/g, ''),
+            'm/0/0',
             Network.REGTEST as BitcoinNetwork
           );
 
@@ -191,7 +264,7 @@ export const ManualSetup = () => {
       }));
 
       const pubkeyHexes = pubkeys.map(buf => buf.toString('hex'));
-      const address = generateMultisigFromPublicKeys(
+      const address = await generateMultisigFromPublicKeys(
         Network.REGTEST,
         'P2WSH',
         threshold,
@@ -203,16 +276,16 @@ export const ManualSetup = () => {
       }
 
       // Save config to store
-      setConfig({
+      const walletConfig: WalletConfig = {
         name: 'My Multisig Wallet',
-        network: 'regtest',
-        addressType: 'P2WSH',
         quorum: {
           requiredSigners: threshold,
           totalSigners: totalSigners,
         },
         extendedPublicKeys: keys,
-      });
+      };
+
+      setStoreConfig(walletConfig);
 
       // Set initial address
       setCurrentAddress(address.address);
@@ -220,7 +293,7 @@ export const ManualSetup = () => {
 
       // Generate 10 addresses by default
       for (let i = 0; i < 10; i++) {
-        const path = `m/${i}`;
+        const path = `m/0/${i}`;
         const derivedPubkeys = await Promise.all(keys.map(async key => {
           const childPubkey = deriveChildPublicKey(
             key.publicKey,
@@ -234,7 +307,7 @@ export const ManualSetup = () => {
         }));
 
         const derivedPubkeyHexes = derivedPubkeys.map(buf => buf.toString('hex'));
-        const newAddress = generateMultisigFromPublicKeys(
+        const newAddress = await generateMultisigFromPublicKeys(
           Network.REGTEST,
           'P2WSH',
           threshold,
@@ -254,10 +327,9 @@ export const ManualSetup = () => {
   };
 
   const handleClearWallet = () => {
-    setConfig({
+    clearAddresses();
+    setStoreConfig({
       name: '',
-      network: 'regtest',
-      addressType: 'P2WSH',
       quorum: {
         requiredSigners: 0,
         totalSigners: 0,
@@ -290,7 +362,7 @@ export const ManualSetup = () => {
               <input
               type="file"
               ref={fileInputRef}
-              onChange={handleImportConfig}
+              onChange={handleFileImport}
               accept=".json"
               className="hidden"
               />
@@ -398,7 +470,7 @@ export const ManualSetup = () => {
                       <label className="text-xs text-gray-400">BIP32 Path:</label>
                       <input
                         type="text"
-                        value={key.bip32Path}
+                        value={key.path}
                         onChange={(e) => updatePath(index, e.target.value)}
                         className={`flex-1 p-1 bg-slate-800 text-white border rounded focus:outline-none font-mono text-sm ${
                           pathErrors[index] ? 'border-red-500' : 'border-slate-600 focus:border-blue-500'
