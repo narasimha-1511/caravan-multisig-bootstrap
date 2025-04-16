@@ -1,4 +1,4 @@
-import { useWalletStore } from '../store/useWalletStore';
+import { useWalletStore } from '../hooks/useWalletStore';
 
 export const ModeSwitcher = () => {
   const { mode, setMode } = useWalletStore();

@@ -1,12 +1,20 @@
 import { useState } from 'react';
-import { useWalletStore } from '../store/useWalletStore';
+import { useWalletStore } from '../store/walletStore';
 
 export const RpcConnectionBox = () => {
-  const { rpc, setRpc, testConnection, loading } = useWalletStore();
+  const { rpc, setRpc, testConnection } = useWalletStore();
   const [isExpanded, setIsExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const handleConnect = async () => {
-    await testConnection();
+    try {
+      setLoading(true);
+      await testConnection();
+    } catch (error) {
+      console.error('Connection error:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -31,9 +39,9 @@ export const RpcConnectionBox = () => {
           )}
           <input
             type="text"
-            placeholder="URL"
-            value={rpc.url}
-            onChange={(e) => setRpc({ url: e.target.value })}
+            placeholder="Host"
+            value={rpc.host}
+            onChange={(e) => setRpc({ host: e.target.value })}
             className="w-full p-2 bg-slate-900 text-white border border-slate-600 rounded focus:border-blue-500 focus:outline-none"
           />
           <input

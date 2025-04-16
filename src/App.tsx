@@ -2,7 +2,7 @@ import { RpcConnectionBox } from './components/RpcConnectionBox'
 import { ModeSwitcher } from './components/ModeSwitcher'
 import { BootstrapWallet } from './components/BootstrapWallet'
 import { ManualSetup } from './components/ManualSetup'
-import { useWalletStore } from './store/useWalletStore'
+import { useWalletStore } from './hooks/useWalletStore'
 import './App.css'
 
 function App() {
@@ -18,7 +18,7 @@ function App() {
       </header>
 
       <main className="container mx-auto px-4 py-6">
-        <div className="max-w-2xl mx-auto">
+        <div className="max-w-8xl mx-auto">
           {mode === 'bootstrap' ? (
             <BootstrapWallet />
           ) : (

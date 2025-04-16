@@ -17,7 +17,7 @@ interface KeyPair {
 }
 
 export const ManualSetup = () => {
-  const { setConfig, setCurrentAddress, importConfig } = useWalletStore();
+  const { setConfig, setCurrentAddress, importConfig, addAddress } = useWalletStore();
   const [keys, setKeys] = useState<KeyPair[]>([]);
   const [threshold, setThreshold] = useState(2);
   const [totalSigners, setTotalSigners] = useState(3);
@@ -155,7 +155,6 @@ export const ManualSetup = () => {
   const createMultisig = async () => {
     try {
       setError('');
-
       console.log('Keys:', keys);
 
       // Check all paths are valid before proceeding
@@ -168,61 +167,42 @@ export const ManualSetup = () => {
         throw new Error(`Invalid BIP32 paths for keys: ${invalidPaths.map(p => p.index + 1).join(', ')}`);
       }
 
-      console.log('Valid paths:', keys);
-
+      // Generate initial multisig address
       const pubkeys = await Promise.all(keys.map(async key => {
         try {
-
-          console.log('Deriving public key for:', key);
-          
-          // First ensure we have a valid extended public key
           if (validateExtendedPublicKey(key.publicKey, Network.REGTEST) != "") {
-            throw new Error(`Invalid extended public key format: ${key.publicKey} ${validateExtendedPublicKey(key.publicKey , Network.REGTEST)}`);
+            throw new Error(`Invalid extended public key format: ${key.publicKey} ${validateExtendedPublicKey(key.publicKey, Network.REGTEST)}`);
           }
 
-          // Derive child public key using the BIP32 path
           const childPubkey = deriveChildPublicKey(
             key.publicKey,
-            key.bip32Path.toString().replace(/'/g, ''), //remove all the ' characters
+            key.bip32Path.toString().replace(/'/g, ''),
             Network.REGTEST as BitcoinNetwork
           );
-
-          console.log('Derived child public key:---------', childPubkey);
 
           if (!childPubkey) {
             throw new Error(`Failed to derive child public key from: ${key.publicKey}`);
           }
 
-          // Convert the hex string to Buffer
           return Buffer.from(childPubkey, 'hex');
         } catch (err) {
           throw new Error(`${err}`);
         }
       }));
 
-      console.log("ended  ------")
-
-      console.log('Derived public keys:', pubkeys);
-
-      // Convert Buffers to hex strings for generateMultisigFromPublicKeys
       const pubkeyHexes = pubkeys.map(buf => buf.toString('hex'));
-      console.log('Public key hexes:', pubkeyHexes);
-
       const address = generateMultisigFromPublicKeys(
-        Network.REGTEST, // Change to REGTEST since you want bcrt prefix
-        'P2WSH',  // Change from P2SH to P2WSH for native SegWit
+        Network.REGTEST,
+        'P2WSH',
         threshold,
         ...pubkeyHexes
       );
 
-      console.log('Generated address:', address);
-
       if (!address?.address) {
-        console.error('Address generation failed:', address);
         throw new Error('Failed to generate multisig address');
       }
 
-      // Save to store
+      // Save config to store
       setConfig({
         name: 'My Multisig Wallet',
         network: 'regtest',
@@ -233,15 +213,60 @@ export const ManualSetup = () => {
         },
         extendedPublicKeys: keys,
       });
+
+      // Set initial address
       setCurrentAddress(address.address);
-      
-      // Update local state
       setMultisigAddress(address.address);
+
+      // Generate 10 addresses by default
+      for (let i = 0; i < 10; i++) {
+        const path = `m/${i}`;
+        const derivedPubkeys = await Promise.all(keys.map(async key => {
+          const childPubkey = deriveChildPublicKey(
+            key.publicKey,
+            path.replace(/'/g, ''),
+            Network.REGTEST as BitcoinNetwork
+          );
+          if (!childPubkey) {
+            throw new Error(`Failed to derive child public key from: ${key.publicKey}`);
+          }
+          return Buffer.from(childPubkey, 'hex');
+        }));
+
+        const derivedPubkeyHexes = derivedPubkeys.map(buf => buf.toString('hex'));
+        const newAddress = generateMultisigFromPublicKeys(
+          Network.REGTEST,
+          'P2WSH',
+          threshold,
+          ...derivedPubkeyHexes
+        );
+
+        if (newAddress?.address) {
+          addAddress(newAddress.address, path);
+        }
+      }
+
       setWalletCreated(true);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Error creating multisig');
       console.error('Error creating multisig:', error);
     }
+  };
+
+  const handleClearWallet = () => {
+    setConfig({
+      name: '',
+      network: 'regtest',
+      addressType: 'P2WSH',
+      quorum: {
+        requiredSigners: 0,
+        totalSigners: 0,
+      },
+      extendedPublicKeys: [],
+    });
+    setCurrentAddress('');
+    setMultisigAddress('');
+    setWalletCreated(false);
   };
 
   return (
@@ -252,20 +277,7 @@ export const ManualSetup = () => {
             {walletCreated ? 'Multisig Wallet' : 'Manual Multisig Setup'}
           </h2>
           <div className="flex gap-2">
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleImportConfig}
-              accept=".json"
-              className="hidden"
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
-            >
-              Import Config
-            </button>
-            {keys.length > 0 && (
+            {walletCreated && (
               <button
                 onClick={handleExportConfig}
                 className="px-3 py-1 bg-green-500 text-white text-sm rounded hover:bg-green-600"
@@ -273,6 +285,32 @@ export const ManualSetup = () => {
                 Export Config
               </button>
             )}
+            {!walletCreated && (
+              <>
+              <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleImportConfig}
+              accept=".json"
+              className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
+                >
+                Import Config
+              </button>
+              </>
+            )}
+            {walletCreated && (
+              <button
+                onClick={handleClearWallet}
+                className="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600"
+              >
+                Clear Wallet
+              </button>
+            )}
+
           </div>
         </div>
         
@@ -389,10 +427,10 @@ export const ManualSetup = () => {
           </div>
         ) : (
           <div>
-            <div className="p-4 bg-slate-900 rounded mb-4">
+            {/* <div className="p-4 bg-slate-900 rounded mb-4">
               <div className="text-sm text-gray-400 mb-1">Multisig Address</div>
               <div className="font-mono break-all">{multisigAddress}</div>
-            </div>
+            </div> */}
             <WalletOperations />
           </div>
         )}

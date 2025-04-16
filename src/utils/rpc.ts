@@ -1,10 +1,19 @@
+export interface RpcConfig {
+  url: string;
+  port: string;
+  username: string;
+  password: string;
+  wallet?: string;
+}
+
 export async function callRpc(
   method: string,
   params: any[] = [],
-  config: { url: string; port: string; username: string; password: string }
+  config: RpcConfig
 ) {
   try {
-    const response = await fetch(`http://${config.url}:${config.port}`, {
+    const walletPath = config.wallet && method !== 'createwallet' ? `/wallet/${config.wallet}` : '';
+    const response = await fetch(`http://${config.url}:${config.port}${walletPath}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -18,12 +27,13 @@ export async function callRpc(
       }),
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
     const data = await response.json();
-    if (data.error) {
+    if (data.error) { 
+      if (data.error.code === -19) {
+        // wallet not found
+        // let's create a watch only wallet
+        console.log('Wallet not found, creating watch only wallet');
+      }
       throw new Error(data.error.message);
     }
 
