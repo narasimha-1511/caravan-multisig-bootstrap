@@ -10,14 +10,24 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@caravan/bitcoin": "^0.3.1",
     "@tailwindcss/vite": "^4.1.4",
+    "@types/bip32": "^1.0.2",
+    "@types/bitcoinjs-lib": "^5.0.4",
+    "bitcoinjs-lib": "^6.1.7",
+    "buffer": "^6.0.3",
+    "ecpair": "^3.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwindcss": "^4.1.4",
+    "tiny-secp256k1": "^2.2.3",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
+    "@esbuild-plugins/node-modules-polyfill": "^0.2.2",
     "@eslint/js": "^9.21.0",
+    "@types/node": "^22.14.1",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
@@ -27,6 +37,9 @@
     "globals": "^15.15.0",
     "typescript": "~5.7.2",
     "typescript-eslint": "^8.24.1",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vite-plugin-node-polyfills": "^0.23.0",
+    "vite-plugin-top-level-await": "^1.5.0",
+    "vite-plugin-wasm": "^3.4.1"
   }
 }

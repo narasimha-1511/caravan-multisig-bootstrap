@@ -1,6 +1,7 @@
 import { RpcConnectionBox } from './components/RpcConnectionBox'
 import { ModeSwitcher } from './components/ModeSwitcher'
 import { BootstrapWallet } from './components/BootstrapWallet'
+import { ManualSetup } from './components/ManualSetup'
 import { useWalletStore } from './store/useWalletStore'
 import './App.css'
 
@@ -21,9 +22,8 @@ function App() {
           {mode === 'bootstrap' ? (
             <BootstrapWallet />
           ) : (
-            <div className="bg-slate-800 rounded-lg p-6">
-              <p className="text-gray-400">Manual setup coming soon...</p>
-            </div>
+            // <div>Manual Setup</div>
+            <ManualSetup />
           )}
         </div>
       </main>
