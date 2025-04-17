@@ -1,607 +1,73 @@
-import { useState } from 'react';
 import { useWalletStore } from '../store/walletStore';
-import { callRpc } from '../utils/rpc';
-import { 
-  generateMultisigFromPublicKeys, 
-  Network as BitcoinNetwork,
-  deriveChildPublicKey,
-} from '@caravan/bitcoin';
-import { Buffer } from 'buffer';
+import { useWalletSetup } from '../hooks/useWalletSetup';
+import { useMultisigSetup } from '../hooks/useMultisigSetup';
+import { useStepper } from '../hooks/useStepper';
+import { Step } from '../types/wallet';
 
-interface WalletInfo {
-  name: string;
-  created: boolean;
-  loading?: boolean;
-  error?: string;
-  descriptor?: string;
-  fingerprint?: string;
-  path?: string;
-  xpub?: string;
-  bip32Path?: string;
-  descriptorDetails?: {
-    desc: string;
-    active: boolean;
-    internal: boolean;
-    timestamp?: string;
-  }[];
-}
-
-interface MultisigConfig {
-  requiredSigners: number;
-  network: 'regtest' | 'testnet' | 'mainnet';
-  addressType: 'p2sh-p2wsh';
-  signers: Array<{
-    fingerprint: string;
-    xpub: string;
-    bip32Path: string;
-  }>;
-}
+const STEPS: Step[] = [
+  { id: 'wallets', title: 'Create Wallets', description: 'Create signing wallets' },
+  { id: 'descriptors', title: 'Get Descriptors', description: 'Retrieve wallet descriptors' },
+  { id: 'multisig', title: 'Setup Multisig', description: 'Configure multisig wallet' },
+  { id: 'fund', title: 'Fund Wallet', description: 'Get deposit address' }
+];
 
 export const BootstrapWallet = () => {
   const { rpc } = useWalletStore();
-  const [currentStep, setCurrentStep] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [wallets, setWallets] = useState<WalletInfo[]>([
-    { name: 'reg_signer1', created: false },
-    { name: 'reg_signer2', created: false }
-  ]);
-
-  const [multisigConfig, setMultisigConfig] = useState<MultisigConfig>({
-    requiredSigners: 2,
-    network: 'regtest',
-    addressType: 'p2sh-p2wsh',
-    signers: []
-  });
-
-  const [depositAddress, setDepositAddress] = useState<string>('');
-  const [isMining, setIsMining] = useState(false);
-  const [fundingAmount, setFundingAmount] = useState(1); // Default 1 BTC
-
-  const steps = [
-    { id: 'wallets', title: 'Create Wallets', description: 'Create signing wallets' },
-    { id: 'descriptors', title: 'Get Descriptors', description: 'Retrieve wallet descriptors' },
-    { id: 'multisig', title: 'Setup Multisig', description: 'Configure multisig wallet' },
-    { id: 'fund', title: 'Fund Wallet', description: 'Get deposit address' }
-  ];
-
-  const decodeDescriptor = (
-    desc: string
-  ): { bip32Path: string; fingerprint: string; xpub: string } => {
-    // Match the descriptor inside the brackets []
-    const match = desc.match(/\[([0-9a-fA-F]{8})(\/[0-9]+h\/[0-9]+h\/[0-9]+h)\]([a-zA-Z0-9]+)/);
   
-    if (!match) {
-      throw new Error("Invalid descriptor format");
-    }
-  
-    const fingerprint = match[1]; // e.g., a7802b6e
-    const bip32Path = match[2];   // e.g., /84h/1h/0h
-    const xpub = match[3];        // e.g., tpub...
-  
-    return {
-      bip32Path,
-      fingerprint,
-      xpub,
-    };
-  };
-  
+  const {
+    wallets,
+    loading,
+    error,
+    createWallets,
+    handleAddWallet,
+    handleRemoveWallet,
+    handleWalletNameChange,
+    handleClearWallets,
+    setError
+  } = useWalletSetup();
 
-  const createWallets = async () => {
-    setLoading(true);
-    setError(null);
-    
-    try {
-      // First get list of all wallets
-      const existingWallets = await callRpc('listwallets', [], {
-        url: rpc.host,
-        port: rpc.port,
-        username: rpc.username,
-        password: rpc.password
-      });
+  const {
+    multisigConfig,
+    setMultisigConfig,
+    depositAddress,
+    isMining,
+    fundingAmount,
+    setFundingAmount,
+    exportConfig,
+    generateAndSendFunds,
+    generateDepositAddress
+  } = useMultisigSetup(wallets);
 
-      for (const wallet of wallets) {
-        setWallets(prev => prev.map(w => 
-          w.name === wallet.name ? { ...w, loading: true, error: undefined } : w
-        ));
+  const {
+    currentStep,
+    steps,
+    handleNext,
+    handlePrevious,
+    resetStepper
+  } = useStepper(STEPS);
 
-        try {
-          if (existingWallets.includes(wallet.name)) {
-            // Wallet exists, check if it's loaded
-            let walletNeedsLoading = false;
-            try {
-              // Try to get wallet info to see if it's loaded
-              await callRpc('getwalletinfo', [], {
-                url: rpc.host,
-                port: rpc.port,
-                username: rpc.username,
-                password: rpc.password,
-                wallet: wallet.name
-              });
-            } catch (err) {
-              walletNeedsLoading = true;
-            }
-
-            if (walletNeedsLoading) {
-              // Load wallet if it exists but isn't loaded
-              await callRpc('loadwallet', [wallet.name], {
-                url: rpc.host,
-                port: rpc.port,
-                username: rpc.username,
-                password: rpc.password
-              });
-            }
-
-            // Get descriptors for existing wallet
-            const descriptor = await callRpc('listdescriptors', [], {
-              url: rpc.host,
-              port: rpc.port,
-              username: rpc.username,
-              password: rpc.password,
-              wallet: wallet.name
-            });
-
-            const _descriptor = descriptor.descriptors?.filter((d: any) => d.internal === false).find((d: any) => d.desc.startsWith('sh(wpkh('));
-            if (_descriptor) {
-              const { bip32Path, fingerprint, xpub } = decodeDescriptor(_descriptor.desc);
-              setWallets(prev => prev.map(w => 
-                w.name === wallet.name ? {
-                  ...w,
-                  created: true,
-                  descriptor: _descriptor.desc,
-                  fingerprint: fingerprint,
-                  xpub: xpub,
-                  bip32Path: bip32Path,
-                  path: bip32Path.replace(/h/g, "'"),
-                  loading: false,
-                  error: undefined
-                } : w
-              ));
-            } else {
-              throw new Error('No valid descriptor found');
-            }
-          } else {
-            // Wallet doesn't exist, create it
-            try {
-              await callRpc('createwallet', [wallet.name], {
-                url: rpc.host,
-                port: rpc.port,
-                username: rpc.username,
-                password: rpc.password
-              });
-
-              // Get descriptors after creating
-              const descriptor = await callRpc('listdescriptors', [], {
-                url: rpc.host,
-                port: rpc.port,
-                username: rpc.username,
-                password: rpc.password,
-                wallet: wallet.name
-              });
-
-              const _descriptor = descriptor.descriptors?.filter((d: any) => d.internal === false).find((d: any) => d.desc.startsWith('sh(wpkh('));
-              if (_descriptor) {
-                const { bip32Path, fingerprint, xpub } = decodeDescriptor(_descriptor.desc);
-                setWallets(prev => prev.map(w => 
-                  w.name === wallet.name ? {
-                    ...w,
-                    created: true,
-                    descriptor: _descriptor.desc,
-                    fingerprint: fingerprint,
-                    xpub: xpub,
-                    bip32Path: bip32Path,
-                    path: bip32Path.replace(/h/g, "'"),
-                    loading: false,
-                    error: undefined
-                  } : w
-                ));
-              } else {
-                throw new Error('No valid descriptor found');
-              }
-            } catch (createErr: any) {
-              setWallets(prev => prev.map(w => 
-                w.name === wallet.name ? { ...w, loading: false, error: `Failed to create wallet: ${createErr.message}` } : w
-              ));
-              throw createErr;
-            }
-          }
-        } catch (err: any) {
-          setWallets(prev => prev.map(w => 
-            w.name === wallet.name ? { ...w, loading: false, error: err.message } : w
-          ));
-        }
+  const handleStepNext = async () => {
+    if (currentStep === 0) {
+      const success = await createWallets();
+      if (success) {
+        handleNext(true);
       }
-      
-      // Only proceed if we have at least 2 valid wallets with descriptors
-      const validWallets = wallets.filter(w => w.created && w.descriptor);
-      if (validWallets.length >= 2) {
-        setCurrentStep(1);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to setup wallets');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getWalletDescriptors = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      for (const wallet of wallets) {
-        if (!wallet.descriptor) {
-          setWallets(prev => prev.map(w => 
-            w.name === wallet.name ? { ...w, loading: true, error: undefined } : w
-          ));
-
-          try {
-            // Get all descriptors for the wallet
-            const descriptorInfo = await callRpc('listdescriptors', [], {
-              url: rpc.host,
-              port: rpc.port,
-              username: rpc.username,
-              password: rpc.password,
-              wallet: wallet.name
-            });
-
-            // Find the sh(wpkh) descriptor that's active and not internal
-            const targetDescriptor = descriptorInfo.descriptors.find(
-              (d: any) => d.desc.startsWith('sh(wpkh') && d.active && !d.internal
-            );
-
-            if (!targetDescriptor) {
-              throw new Error('No valid sh(wpkh) descriptor found');
-            }
-
-            // Extract fingerprint and xpub from descriptor
-            const desc = targetDescriptor.desc;
-            const fingerprintMatch = desc.match(/\[([a-f0-9]{8})(\/[0-9]+h\/[0-9]+h\/[0-9]+h)\]([a-zA-Z0-9]+)/);
-            if (!fingerprintMatch) {
-              throw new Error('Failed to extract xpub data from descriptor');
-            }
-            const fingerprint = fingerprintMatch[1]; // e.g., a7802b6e
-            const bip32Path = fingerprintMatch[2];   // e.g., /84h/1h/0h
-            const xpub = fingerprintMatch[3];        // e.g., tpub...
-
-            setWallets(prev => prev.map(w => 
-              w.name === wallet.name ? {
-                ...w,
-                loading: false,
-                descriptor: targetDescriptor.desc,
-                descriptorDetails: descriptorInfo.descriptors,
-                fingerprint,
-                xpub,
-                path: bip32Path.replace(/h/g, "'"),
-                bip32Path,
-                error: undefined
-              } : w
-            ));
-          } catch (err: any) {
-            setWallets(prev => prev.map(w => 
-              w.name === wallet.name ? { ...w, loading: false, error: err.message } : w
-            ));
-            throw err;
-          }
-        }
-      }
-      
-      // Only proceed if all wallets have valid descriptors
+    } else if (currentStep === 1) {
       const validWallets = wallets.filter(w => w.created && w.descriptor && w.fingerprint && w.xpub);
       if (validWallets.length >= 2) {
-        setCurrentStep(2);
+        handleNext(true);
       } else {
         setError('At least 2 wallets must have valid descriptors with fingerprints and xpubs');
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get wallet descriptors');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddWallet = () => {
-    const newName = `reg_signer${wallets.length + 1}`;
-    setWallets(prev => [...prev, { name: newName, created: false }]);
-  };
-
-  const handleRemoveWallet = (index: number) => {
-    if (wallets.length > 2) {
-      setWallets(prev => prev.filter((_, i) => i !== index));
-    }
-  };
-
-  const handleWalletNameChange = (index: number, newName: string) => {
-    setWallets(prev => prev.map((wallet, i) => 
-      i === index ? { ...wallet, name: newName } : wallet
-    ));
-  };
-
-  const handleNext = () => {
-    if (currentStep === 0) {
-      createWallets();
-    } else if (currentStep === 1) {
-      getWalletDescriptors();
     } else if (currentStep === 2) {
-      setCurrentStep(3);
+      handleNext(true);
     }
   };
 
-  const handlePrevious = () => {
-    if (currentStep > 0) {
-      setCurrentStep(currentStep - 1);
-    }
+  const handleClear = async () => {
+    await handleClearWallets();
+    resetStepper();
   };
-
-  const exportConfig = async () => {
-    try {
-      setError(null);
-
-      // Get descriptors for each wallet
-      const walletDescriptors = await Promise.all(wallets.map(async wallet => {
-        const descriptors = await callRpc('listdescriptors', [], {
-          url: rpc.host,
-          port: rpc.port,
-          username: rpc.username,
-          password: rpc.password,
-          wallet: wallet.name
-        });
-        const descriptor = descriptors.descriptors.find((d: { desc: string }) => d.desc.includes('sh(wpkh('));
-        if (!descriptor) {
-          throw new Error(`No valid descriptor found for wallet ${wallet.name}`);
-        }
-        return descriptor;
-      }));
-
-      // Extract xpubs and fingerprints from descriptors
-      const xpubData = await Promise.all(walletDescriptors.map(async (desc) => {
-        // First get the parent descriptor
-        const match = desc.desc.match(/\[([a-f0-9]{8})(\/[0-9]+h\/[0-9]+h\/[0-9]+h)\]([a-zA-Z0-9]+)/);
-        if (!match) {
-          throw new Error('Failed to extract xpub data from descriptor');
-        }
-
-        // Get the raw descriptor
-        const rawDesc = await callRpc('getdescriptorinfo', [desc.desc], {
-          url: rpc.host,
-          port: rpc.port,
-          username: rpc.username,
-          password: rpc.password
-        });
-
-        // Convert path to proper BIP32 format
-        const pathParts = match[2].split('/').filter(Boolean);
-        const formattedPath = `m/${pathParts.map((p: string) => p.replace('h', "'")).join('/')}`;
-
-        return {
-          xfp: match[1],
-          path: formattedPath,
-          xpub: rawDesc.descriptor.match(/\[(.*?)\](.*?)\//)[2] || match[3]
-        };
-      }));
-
-      const config = {
-        name: "Bitcoin Multisig Wallet",
-        uuid: "",
-        addressType: "P2WSH",
-        chain: "regtest",
-        client: {
-          type: "private",
-          url: `http://${rpc.host}:${rpc.port}`,
-          username: rpc.username,
-          password: rpc.password,
-          walletName: "watcher"
-        },
-        quorum: {
-          requiredSigners: multisigConfig.requiredSigners,
-          totalSigners: wallets.length
-        },
-        extendedPublicKeys: xpubData.map((data, i) => ({
-          name: `Extended Public Key ${i + 1}`,
-          bip32Path: data.path,
-          xpub: data.xpub,
-          xfp: data.xfp,
-          method: "text"
-        })),
-        startingAddressIndex: 0,
-        addressExplorerUrl: "https://mempool.space/address/"
-      };
-
-      // Create and download the config file
-      const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'Bitcoin Multisig Wallet Config.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to export config');
-    }
-  };
-
-  const generateAndSendFunds = async (toAddress: string, amount: number) => {
-    try {
-      setIsMining(true);
-      setError(null);
-
-      // Use the first wallet for mining
-      const minerWallet = 'miner_wallet';
-
-      // Check if miner wallet exists and is loaded
-      const listWallets = await callRpc('listwallets', [], {
-        url: rpc.host,
-        port: rpc.port,
-        username: rpc.username,
-        password: rpc.password
-      });
-
-      let walletNeedsLoading = false;
-      try {
-        // Try to get wallet info to check if it's loaded and accessible
-        await callRpc('getwalletinfo', [], {
-          url: rpc.host,
-          port: rpc.port,
-          username: rpc.username,
-          password: rpc.password,
-          wallet: minerWallet
-        });
-      } catch (err) {
-        walletNeedsLoading = true;
-      }
-
-      // Handle wallet creation/loading
-      if (!listWallets.includes(minerWallet)) {
-        // Create new miner wallet if it doesn't exist
-        await callRpc('createwallet', [minerWallet], {
-          url: rpc.host,
-          port: rpc.port,
-          username: rpc.username,
-          password: rpc.password
-        });
-      } else if (walletNeedsLoading) {
-        // Load wallet if it exists but isn't loaded
-        await callRpc('loadwallet', [minerWallet], {
-          url: rpc.host,
-          port: rpc.port,
-          username: rpc.username,
-          password: rpc.password
-        });
-      }
-
-      // Check current balance
-      const balance = await callRpc('getbalance', [], {
-        url: rpc.host,
-        port: rpc.port,
-        username: rpc.username,
-        password: rpc.password,
-        wallet: minerWallet
-      });
-
-      // Get miner address for mining rewards
-      const minerAddress = await callRpc('getnewaddress', [], {
-        url: rpc.host,
-        port: rpc.port,
-        username: rpc.username,
-        password: rpc.password,
-        wallet: minerWallet
-      });
-
-      // If balance is insufficient, mine blocks
-      if (balance < amount) {
-        // Mine 101 blocks to get mature coins
-        await callRpc('generatetoaddress', [101, minerAddress], {
-          url: rpc.host,
-          port: rpc.port,
-          username: rpc.username,
-          password: rpc.password
-        });
-
-        // Verify new balance after mining
-        const newBalance = await callRpc('getbalance', [], {
-          url: rpc.host,
-          port: rpc.port,
-          username: rpc.username,
-          password: rpc.password,
-          wallet: minerWallet
-        });
-
-        if (newBalance < amount) {
-          throw new Error(`Insufficient balance (${newBalance} BTC) after mining. Need ${amount} BTC.`);
-        }
-      }
-
-      // Send the specified amount to the multisig address
-      const txid = await callRpc('sendtoaddress', [toAddress, amount], {
-        url: rpc.host,
-        port: rpc.port,
-        username: rpc.username,
-        password: rpc.password,
-        wallet: minerWallet
-      });
-
-      // Generate 1 block to confirm the transaction
-      await callRpc('generatetoaddress', [1, minerAddress], {
-        url: rpc.host,
-        port: rpc.port,
-        username: rpc.username,
-        password: rpc.password
-      });
-
-      // Verify the transaction was confirmed
-      const tx = await callRpc('gettransaction', [txid], {
-        url: rpc.host,
-        port: rpc.port,
-        username: rpc.username,
-        password: rpc.password,
-        wallet: minerWallet
-      });
-
-      if (!tx.confirmations || tx.confirmations < 1) {
-        throw new Error('Transaction failed to confirm');
-      }
-
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate and send coins');
-    } finally {
-      setIsMining(false);
-    }
-  };
-
-  const handleClearWallets = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      setDepositAddress('');
-      setCurrentStep(0);
-      
-      // Unload all wallets
-      for (const wallet of wallets) {
-        try {
-          await callRpc('unloadwallet', [wallet.name], {
-            url: rpc.host,
-            port: rpc.port,
-            username: rpc.username,
-            password: rpc.password
-          });
-        } catch (err) {
-          // Ignore errors if wallet doesn't exist
-          console.log(`Error unloading wallet ${wallet.name}:`, err);
-        }
-      }
-
-      // Reset wallet state
-      setWallets([
-        { name: 'reg_signer1', created: false },
-        { name: 'reg_signer2', created: false }
-      ]);
-
-      // Reset multisig config
-      setMultisigConfig({
-        requiredSigners: 2,
-        network: 'regtest',
-        addressType: 'p2sh-p2wsh',
-        signers: []
-      });
-
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to clear wallets');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderClearButton = () => (
-    <button
-      onClick={handleClearWallets}
-      className="px-4 py-2 text-red-400 hover:text-red-300 disabled:opacity-50"
-      disabled={loading}
-    >
-      Clear Wallets
-    </button>
-  );
 
   if (!rpc.connected) {
     return (
@@ -823,52 +289,6 @@ export const BootstrapWallet = () => {
                   ))}
                 </select>
               </div>
-
-              <div className="p-4 bg-slate-900 rounded-lg space-y-3">
-                <h4 className="text-white font-medium">Configured Signers</h4>
-                {wallets.map((wallet, index) => (
-                  <div key={index} className="pl-4 border-l-2 border-slate-700">
-                    <div className="text-sm text-white font-medium">{wallet.name}</div>
-                    <div className="text-xs text-gray-400 font-mono">
-                      Fingerprint: {wallet.fingerprint}<br/>
-                      Path: {wallet.bip32Path?.replace(/h/g, "'")}<br/>
-                      xPub: {wallet.xpub}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex gap-4">
-                <button
-                  onClick={exportConfig}
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  Export Config
-                </button>
-                <button
-                  onClick={() => {
-                    const url = `https://unchained-capital.github.io/caravan/#/wallet/import?config=${encodeURIComponent(JSON.stringify({
-                      name: "Multisig Wallet",
-                      network: multisigConfig.network,
-                      addressType: multisigConfig.addressType,
-                      extendedPublicKeys: wallets
-                        .filter(w => w.fingerprint && w.xpub && w.bip32Path)
-                        .map(w => ({
-                          name: w.name,
-                          bip32Path: w.bip32Path!.replace(/h/g, "'"),
-                          xpub: w.xpub!,
-                          fingerprint: w.fingerprint!
-                        })),
-                      requiredSigners: multisigConfig.requiredSigners,
-                      startingAddressIndex: 0
-                    }))}`;
-                    window.open(url, '_blank');
-                  }}
-                  className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500"
-                >
-                  Open in Caravan
-                </button>
-              </div>
             </div>
           </div>
         )}
@@ -882,7 +302,43 @@ export const BootstrapWallet = () => {
             <div className="space-y-4">
               <div className="p-4 bg-slate-900 rounded-lg">
                 <div className="text-sm text-gray-400 mb-4">
-                  Your {multisigConfig.requiredSigners}-of-{wallets.length} multisig wallet is ready. Send funds to this address:
+                  Your {multisigConfig.requiredSigners}-of-{wallets.length} multisig wallet is ready.
+                </div>
+
+                <div className="flex gap-4 mb-4">
+                  <button
+                    onClick={exportConfig}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    Export Config
+                  </button>
+                  {/* <button
+                    onClick={() => {
+                      const url = `https://unchained-capital.github.io/caravan/#/wallet/import?config=${encodeURIComponent(JSON.stringify({
+                        name: "Multisig Wallet",
+                        network: multisigConfig.network,
+                        addressType: multisigConfig.addressType,
+                        extendedPublicKeys: wallets
+                          .filter(w => w.fingerprint && w.xpub && w.bip32Path)
+                          .map(w => ({
+                            name: w.name,
+                            bip32Path: w.bip32Path!.replace(/h/g, "'"),
+                            xpub: w.xpub!,
+                            fingerprint: w.fingerprint!
+                          })),
+                        requiredSigners: multisigConfig.requiredSigners,
+                        startingAddressIndex: 0
+                      }))}`;
+                      window.open(url, '_blank');
+                    }}
+                    className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  >
+                    Open in Caravan
+                  </button> */}
+                </div>
+
+                <div className="text-sm text-gray-400 mb-4">
+                  Send funds to this address:
                 </div>
                 {depositAddress ? (
                   <>
@@ -926,47 +382,7 @@ export const BootstrapWallet = () => {
                   </>
                 ) : (
                   <button
-                    onClick={async () => {
-                      try {
-                        setLoading(true);
-                        setError(null);
-
-                        // Get the pubkeys from each wallet
-                        const pubkeys = await Promise.all(wallets.map(async wallet => {
-                          try {
-                            const childPubkey = deriveChildPublicKey(
-                              wallet.xpub!,
-                              'm/0/1',
-                              BitcoinNetwork.REGTEST
-                            );
-                            if (!childPubkey) {
-                              throw new Error(`Failed to derive child public key for wallet ${wallet.name}`);
-                            }
-                            return Buffer.from(childPubkey, 'hex');
-                          } catch (err) {
-                            throw new Error(`Error deriving key for wallet ${wallet.name}: ${err}`);
-                          }
-                        }));
-
-                        const pubkeyHexes = pubkeys.map(buf => buf.toString('hex'));
-                        const result = generateMultisigFromPublicKeys(
-                          BitcoinNetwork.REGTEST,
-                          'P2WSH',
-                          multisigConfig.requiredSigners,
-                          ...pubkeyHexes
-                        );
-
-                        if (!result?.address) {
-                          throw new Error('Failed to generate multisig address');
-                        }
-
-                        setDepositAddress(result.address);
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : 'Failed to get deposit address');
-                      } finally {
-                        setLoading(false);
-                      }
-                    }}
+                    onClick={generateDepositAddress}
                     className="w-full p-3 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
                     disabled={loading}
                   >
@@ -999,10 +415,18 @@ export const BootstrapWallet = () => {
           >
             Previous
           </button>
-          {renderClearButton()}
+          {currentStep === 0 && (
+            <button
+              onClick={handleClear}
+              className="px-4 py-2 text-red-400 hover:text-red-300 disabled:opacity-50"
+              disabled={loading}
+            >
+              Clear Wallets
+            </button>
+          )}
         </div>
         <button
-          onClick={handleNext}
+          onClick={handleStepNext}
           disabled={
             loading || 
             (currentStep === 0 && wallets.filter(w => w.created && w.descriptor).length < 2) ||

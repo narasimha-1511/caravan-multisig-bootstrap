@@ -16,19 +16,31 @@ interface KeyPair {
   path: string;
   fingerprint: string;
   name?: string;
+  method?: string;
 }
 
 interface WalletConfig {
   name: string;
+  uuid: string;
+  addressType: string;
+  network: string;
+  client: {
+    type?: string;
+    url: string;
+    username: string;
+    walletName: string;
+  };
   quorum: {
     requiredSigners: number;
     totalSigners: number;
   };
+  startingAddressIndex: number;
+  addressExplorerUrl: string;
   extendedPublicKeys: KeyPair[];
 }
 
 export const ManualSetup = () => {
-  const { setConfig: setStoreConfig, setCurrentAddress, addAddress, clearAddresses } = useWalletStore();
+  const { setConfig: setStoreConfig, setCurrentAddress, addAddress, clearAddresses , rpc , setRpc } = useWalletStore();
   const [keys, setKeys] = useState<KeyPair[]>([]);
   const [threshold, setThreshold] = useState(2);
   const [totalSigners, setTotalSigners] = useState(3);
@@ -131,6 +143,10 @@ export const ManualSetup = () => {
       // Convert config format
       const walletConfig: WalletConfig = {
         name: config.name,
+        uuid: '',
+        addressType: config.addressType,
+        network: config.network,
+        client: config.client,
         quorum: {
           requiredSigners: config.quorum.requiredSigners,
           totalSigners: config.quorum.totalSigners
@@ -139,9 +155,23 @@ export const ManualSetup = () => {
           publicKey: key.xpub,
           path: key.bip32Path,
           fingerprint: key.xfp,
-          name: key.name
-        }))
+          name: key.name,
+          method: "text"
+        })),
+        startingAddressIndex: config.startingAddressIndex,
+        addressExplorerUrl: config.addressExplorerUrl
       };
+
+      //url=http://bitcoind.localhost:8080
+
+      // we only want bitcoind.localhost for host
+
+      setRpc({
+        host: config.client?.url.split(":")[1].slice(2),
+        port: config.client?.url.split(":")[2],
+        username: config.client?.username,
+        password: ""
+      });
 
       setStoreConfig(walletConfig);
 
@@ -203,6 +233,15 @@ export const ManualSetup = () => {
   const handleExportConfig = () => {
     const config: WalletConfig = {
       name: 'My Multisig Wallet',
+      uuid: '',
+      addressType: 'P2WSH',
+      network: 'regtest',
+      client: {
+        type: 'private',
+        url: `http://${rpc.host}:${rpc.port}`,
+        username: rpc.username,
+        walletName: "watcher"+rpc.watchOnlyWalletNumber,
+      },
       quorum: {
         requiredSigners: threshold,
         totalSigners: totalSigners,
@@ -213,6 +252,8 @@ export const ManualSetup = () => {
         fingerprint: key.fingerprint,
         name: key.name
       })),
+      startingAddressIndex: 0,
+      addressExplorerUrl: "https://mempool.space/address/"
     };
 
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
@@ -282,11 +323,22 @@ export const ManualSetup = () => {
       // Save config to store
       const walletConfig: WalletConfig = {
         name: 'My Multisig Wallet',
+        uuid: '',
+        addressType: 'P2WSH',
+        network: 'regtest',
+        client: {
+          type: 'private',
+          url: `http://${rpc.host}:${rpc.port}`,
+          username: rpc.username,
+          walletName: "watcher"+rpc.watchOnlyWalletNumber,
+        },
         quorum: {
           requiredSigners: threshold,
           totalSigners: totalSigners,
         },
         extendedPublicKeys: keys,
+        startingAddressIndex: 0,
+        addressExplorerUrl: "https://mempool.space/address/"
       };
 
       setStoreConfig(walletConfig);
