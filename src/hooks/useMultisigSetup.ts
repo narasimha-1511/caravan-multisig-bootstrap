@@ -63,6 +63,27 @@ export const useMultisigSetup = (wallets: WalletInfo[]) => {
         };
       }));
 
+      try {
+        await callRpc('getwalletinfo', [], {
+          url: rpc.host,
+          port: rpc.port,
+          username: rpc.username,
+          password: rpc.password,
+          wallet: `watcher${rpc.watchOnlyWalletNumber}`
+        });
+      } catch (err) {
+        try {
+          await callRpc('createwallet', [`watcher${rpc.watchOnlyWalletNumber}`, true, true], {
+            url: rpc.host,
+            port: rpc.port,
+            username: rpc.username,
+            password: rpc.password
+          });
+        } catch (err) {
+          setError('Failed to create watch-only wallet');
+        }
+      }
+
       const config = {
         name: "Bitcoin Multisig Wallet",
         uuid: "",
