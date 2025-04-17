@@ -108,6 +108,7 @@ export const BootstrapWallet = () => {
         try {
           if (existingWallets.includes(wallet.name)) {
             // Wallet exists, check if it's loaded
+            let walletNeedsLoading = false;
             try {
               // Try to get wallet info to see if it's loaded
               await callRpc('getwalletinfo', [], {
@@ -117,79 +118,47 @@ export const BootstrapWallet = () => {
                 password: rpc.password,
                 wallet: wallet.name
               });
+            } catch (err) {
+              walletNeedsLoading = true;
+            }
 
-              // Get descriptors for existing wallet
-              const descriptor = await callRpc('listdescriptors', [], {
+            if (walletNeedsLoading) {
+              // Load wallet if it exists but isn't loaded
+              await callRpc('loadwallet', [wallet.name], {
                 url: rpc.host,
                 port: rpc.port,
                 username: rpc.username,
-                password: rpc.password,
-                wallet: wallet.name
+                password: rpc.password
               });
+            }
 
-              const _descriptor = descriptor.descriptors?.filter((d: any) => d.internal === false).find((d: any) => d.desc.startsWith('sh(wpkh('));
-              if (_descriptor) {
-                const { bip32Path, fingerprint, xpub } = decodeDescriptor(_descriptor.desc);
-                setWallets(prev => prev.map(w => 
-                  w.name === wallet.name ? {
-                    ...w,
-                    created: true,
-                    descriptor: _descriptor.desc,
-                    fingerprint: fingerprint,
-                    xpub: xpub,
-                    bip32Path: bip32Path,
-                    path: bip32Path.replace(/h/g, "'"),
-                    loading: false,
-                    error: undefined
-                  } : w
-                ));
-              } else {
-                throw new Error('No valid descriptor found');
-              }
-            } catch (err) {
-              // Wallet exists but not loaded, try to load it
-              try {
-                await callRpc('loadwallet', [wallet.name], {
-                  url: rpc.host,
-                  port: rpc.port,
-                  username: rpc.username,
-                  password: rpc.password
-                });
+            // Get descriptors for existing wallet
+            const descriptor = await callRpc('listdescriptors', [], {
+              url: rpc.host,
+              port: rpc.port,
+              username: rpc.username,
+              password: rpc.password,
+              wallet: wallet.name
+            });
 
-                // Get descriptors after loading
-                const descriptor = await callRpc('listdescriptors', [], {
-                  url: rpc.host,
-                  port: rpc.port,
-                  username: rpc.username,
-                  password: rpc.password,
-                  wallet: wallet.name
-                });
-
-                const _descriptor = descriptor.descriptors?.filter((d: any) => d.internal === false).find((d: any) => d.desc.startsWith('sh(wpkh('));
-                if (_descriptor) {
-                  const { bip32Path, fingerprint, xpub } = decodeDescriptor(_descriptor.desc);
-                  setWallets(prev => prev.map(w => 
-                    w.name === wallet.name ? {
-                      ...w,
-                      created: true,
-                      descriptor: _descriptor.desc,
-                      fingerprint: fingerprint,
-                      xpub: xpub,
-                      bip32Path: bip32Path,
-                      path: bip32Path.replace(/h/g, "'"),
-                      loading: false,
-                      error: undefined
-                    } : w
-                  ));
-                } else {
-                  throw new Error('No valid descriptor found');
-                }
-              } catch (loadErr: any) {
-                setWallets(prev => prev.map(w => 
-                  w.name === wallet.name ? { ...w, loading: false, error: `Failed to load wallet: ${loadErr.message}` } : w
-                ));
-                throw loadErr;
-              }
+            const _descriptor = descriptor.descriptors?.filter((d: any) => d.internal === false).find((d: any) => d.desc.startsWith('sh(wpkh('));
+            if (_descriptor) {
+              const { bip32Path, fingerprint, xpub } = decodeDescriptor(_descriptor.desc);
+              setWallets(prev => prev.map(w => 
+                w.name === wallet.name ? {
+                  ...w,
+                  created: true,
+                  descriptor: _descriptor.desc,
+                  fingerprint: fingerprint,
+                  xpub: xpub,
+                  bip32Path: bip32Path,
+                  path: bip32Path.replace(/h/g, "'"),
+                  loading: false,
+                  error: undefined
+                } : w
+              ));
+            } else {
+              throw new Error('No valid descriptor found');
             }
           } else {
             // Wallet doesn't exist, create it
@@ -460,29 +429,57 @@ export const BootstrapWallet = () => {
       // Use the first wallet for mining
       const minerWallet = 'miner_wallet';
 
-      // Create and load miner wallet if not exists
+      // Check if miner wallet exists and is loaded
+      const listWallets = await callRpc('listwallets', [], {
+        url: rpc.host,
+        port: rpc.port,
+        username: rpc.username,
+        password: rpc.password
+      });
+
+      let walletNeedsLoading = false;
       try {
+        // Try to get wallet info to check if it's loaded and accessible
+        await callRpc('getwalletinfo', [], {
+          url: rpc.host,
+          port: rpc.port,
+          username: rpc.username,
+          password: rpc.password,
+          wallet: minerWallet
+        });
+      } catch (err) {
+        walletNeedsLoading = true;
+      }
+
+      // Handle wallet creation/loading
+      if (!listWallets.includes(minerWallet)) {
+        // Create new miner wallet if it doesn't exist
         await callRpc('createwallet', [minerWallet], {
           url: rpc.host,
           port: rpc.port,
           username: rpc.username,
           password: rpc.password
         });
-      } catch (err: any) {
-        // If wallet exists, load it
-        if (err.message.includes('already exists')) {
-          await callRpc('loadwallet', [minerWallet], {
-            url: rpc.host,
-            port: rpc.port,
-            username: rpc.username,
-            password: rpc.password
-          });
-        } else {
-          throw err;
-        }
+      } else if (walletNeedsLoading) {
+        // Load wallet if it exists but isn't loaded
+        await callRpc('loadwallet', [minerWallet], {
+          url: rpc.host,
+          port: rpc.port,
+          username: rpc.username,
+          password: rpc.password
+        });
       }
 
-      // Get miner address
+      // Check current balance
+      const balance = await callRpc('getbalance', [], {
+        url: rpc.host,
+        port: rpc.port,
+        username: rpc.username,
+        password: rpc.password,
+        wallet: minerWallet
+      });
+
+      // Get miner address for mining rewards
       const minerAddress = await callRpc('getnewaddress', [], {
         url: rpc.host,
         port: rpc.port,
@@ -491,16 +488,32 @@ export const BootstrapWallet = () => {
         wallet: minerWallet
       });
 
-      // Generate 101 blocks to miner's address to get mature coins
-      await callRpc('generatetoaddress', [101, minerAddress], {
-        url: rpc.host,
-        port: rpc.port,
-        username: rpc.username,
-        password: rpc.password
-      });
+      // If balance is insufficient, mine blocks
+      if (balance < amount) {
+        // Mine 101 blocks to get mature coins
+        await callRpc('generatetoaddress', [101, minerAddress], {
+          url: rpc.host,
+          port: rpc.port,
+          username: rpc.username,
+          password: rpc.password
+        });
+
+        // Verify new balance after mining
+        const newBalance = await callRpc('getbalance', [], {
+          url: rpc.host,
+          port: rpc.port,
+          username: rpc.username,
+          password: rpc.password,
+          wallet: minerWallet
+        });
+
+        if (newBalance < amount) {
+          throw new Error(`Insufficient balance (${newBalance} BTC) after mining. Need ${amount} BTC.`);
+        }
+      }
 
       // Send the specified amount to the multisig address
-      await callRpc('sendtoaddress', [toAddress, amount], {
+      const txid = await callRpc('sendtoaddress', [toAddress, amount], {
         url: rpc.host,
         port: rpc.port,
         username: rpc.username,
@@ -508,13 +521,26 @@ export const BootstrapWallet = () => {
         wallet: minerWallet
       });
 
-      // Generate 1 more block to confirm the transaction
+      // Generate 1 block to confirm the transaction
       await callRpc('generatetoaddress', [1, minerAddress], {
         url: rpc.host,
         port: rpc.port,
         username: rpc.username,
         password: rpc.password
       });
+
+      // Verify the transaction was confirmed
+      const tx = await callRpc('gettransaction', [txid], {
+        url: rpc.host,
+        port: rpc.port,
+        username: rpc.username,
+        password: rpc.password,
+        wallet: minerWallet
+      });
+
+      if (!tx.confirmations || tx.confirmations < 1) {
+        throw new Error('Transaction failed to confirm');
+      }
 
       setError(null);
     } catch (err) {
@@ -910,7 +936,7 @@ export const BootstrapWallet = () => {
                           try {
                             const childPubkey = deriveChildPublicKey(
                               wallet.xpub!,
-                              'm/0/0',
+                              'm/0/1',
                               BitcoinNetwork.REGTEST
                             );
                             if (!childPubkey) {

@@ -28,7 +28,7 @@ interface WalletConfig {
 }
 
 export const ManualSetup = () => {
-  const { setConfig: setStoreConfig, setCurrentAddress, addAddress , clearAddresses } = useWalletStore();
+  const { setConfig: setStoreConfig, setCurrentAddress, addAddress, clearAddresses } = useWalletStore();
   const [keys, setKeys] = useState<KeyPair[]>([]);
   const [threshold, setThreshold] = useState(2);
   const [totalSigners, setTotalSigners] = useState(3);
@@ -125,6 +125,8 @@ export const ManualSetup = () => {
   const handleImportConfig = async (jsonConfig: string) => {
     try {
       const config = JSON.parse(jsonConfig);
+      
+      clearAddresses();
 
       // Convert config format
       const walletConfig: WalletConfig = {
@@ -165,7 +167,7 @@ export const ManualSetup = () => {
 
           const childPubkey = deriveChildPublicKey(
             key.publicKey,
-            key.path.toString().replace(/'/g, ''),
+            'm/0/0',
             Network.REGTEST as BitcoinNetwork
           );
 
@@ -179,7 +181,7 @@ export const ManualSetup = () => {
         }
       }));
 
-      const address = await generateMultisigFromPublicKeys(
+      const address = generateMultisigFromPublicKeys(
         Network.REGTEST,
         'P2WSH',
         threshold,
@@ -249,9 +251,11 @@ export const ManualSetup = () => {
 
           const childPubkey = deriveChildPublicKey(
             key.publicKey,
-            'm/0/0',
+            'm/0/1',
             Network.REGTEST as BitcoinNetwork
           );
+
+          console.log('Child pubkey: m/0/0', childPubkey);
 
           if (!childPubkey) {
             throw new Error(`Failed to derive child public key from: ${key.publicKey}`);
