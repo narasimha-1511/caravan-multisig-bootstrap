@@ -48,7 +48,7 @@ export const ManualSetup = () => {
   const [currentPath, setCurrentPath] = useState("m/0/0");
   const [error, setError] = useState<string | null>(null);
   const [pathErrors, setPathErrors] = useState<Record<number, string>>({});
-  const [multisigAddress, setMultisigAddress] = useState('');
+  const [_multisigAddress, setMultisigAddress] = useState('');
   const [walletCreated, setWalletCreated] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
