@@ -19,12 +19,14 @@ jobs:
       run: npx playwright install --with-deps
     - name: npm install
       run: npm install
-    - name: start the dev server
-      run: npm run dev
+    - name: Start the dev server
+      run: |
+        npm run dev & # Run in background
+        echo "Waiting for dev server to be ready..."
+        # Wait for the dev server to be ready (adjust the URL as needed)
+        npx wait-on http://localhost:5173 --timeout 60000
     - name: Run Playwright tests
       run: npx playwright test
-    - name: stop the dev server
-      run: npm run stop
     - uses: actions/upload-artifact@v4
       if: ${{ !cancelled() }}
       with:
