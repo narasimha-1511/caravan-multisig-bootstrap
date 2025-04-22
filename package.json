@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "stop": "lsof -ti :5173 | xargs kill -9",
+    "preview": "vite preview",
+    "test": "playwright test",
+    "test-ui": "playwright test --ui"
   },
   "dependencies": {
     "@caravan/bitcoin": "^0.3.1",
@@ -28,6 +31,7 @@
     "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
     "@esbuild-plugins/node-modules-polyfill": "^0.2.2",
     "@eslint/js": "^9.21.0",
+    "@playwright/test": "^1.52.0",
     "@types/node": "^22.14.1",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",

@@ -43,7 +43,7 @@ export const ManualSetup = () => {
   const { setConfig: setStoreConfig, setCurrentAddress, addAddress, clearAddresses , rpc , setRpc } = useWalletStore();
   const [keys, setKeys] = useState<KeyPair[]>([]);
   const [threshold, setThreshold] = useState(2);
-  const [totalSigners, setTotalSigners] = useState(3);
+  const [totalSigners, setTotalSigners] = useState(2);
   const [currentXpub, setCurrentXpub] = useState('');
   const [currentPath, setCurrentPath] = useState("m/0/0");
   const [error, setError] = useState<string | null>(null);
