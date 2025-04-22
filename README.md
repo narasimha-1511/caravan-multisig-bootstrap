@@ -18,6 +18,12 @@ A user-friendly Bitcoin BootStrapping multisig wallet setup tool built with Reac
 - GitHub Actions for CI/CD
 
 
+
+
+https://github.com/user-attachments/assets/f0a63008-615c-494b-ab6c-59b0213d7baf
+
+
+
 ## Testing
 
 I have used Playwright for end-to-end testing to ensure reliable wallet operations. Our test suite covers:
@@ -26,6 +32,12 @@ I have used Playwright for end-to-end testing to ensure reliable wallet operatio
 - RPC connection handling
 - Manual and bootstrap configuration modes
 - Error scenarios and edge cases
+
+
+
+https://github.com/user-attachments/assets/0fd31f71-5573-4fbb-b4cc-ba25e91aa68e
+
+
 
 ### Running Tests Locally
 
